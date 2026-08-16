@@ -10,6 +10,7 @@
 #include <vector>
 #include <cstdint>
 #include <chrono>
+#include <algorithm>   // sweepStale 里用了 std::sort / std::unique
 
 namespace sip {
 

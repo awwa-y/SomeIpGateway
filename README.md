@@ -9,31 +9,47 @@
 
 ## ✨ 特性
 
-- **SOME/IP 风格二进制协议头**：25字节Header（复用 VehicleIpcBus `vipc::Header` 保证全链路一致）
-- **epoll ET + 非阻塞 IO**：单机 5000+ 长连接，<1ms 平均延迟
+- **SOME/IP 风格二进制协议头**：25字节 Header，`static_assert` 防协议漂移（与 VehicleIpcBus 保持字段级一致）
+- **epoll ET + 非阻塞 IO**：读循环 drain 到 EAGAIN，accept 循环收干，SIGPIPE 免疫
+- **每连接收发缓冲 + 半包状态机**：任意切割的字节流正确重组消息，逐字节慢速发送已验证
+- **短写处理 + EPOLLOUT 按需开关 + 4MB 背压水位线**：写不完自动排队，慢客户端积压超限主动踢除
 - **服务注册发现路由**：`ServiceID → ProviderFD` 映射，精准转发（告别无差别广播）
-- **Request-Response RPC 配对**：`client_id` 匹配，请求→Provider→响应→Client 闭环
-- **心跳保活 + 过期剔除**：timerfd 定时扫描，Provider 10秒无心跳从路由表移除
-- **离线消息持久化**（LevelDB / Append-only 文件）：目标服务宕机时消息落盘，恢复后补发
-- **QPS 统计 + HTTP /stats 接口**：curl 即可查看连接数、QPS、内存占用
-- **Makefile + CMake 双构建**
+- **Request-Response RPC 配对**：`client_id` 匹配闭环；连接断开自动清理悬挂配对（防 fd 复用错发）
+- **心跳保活 + 过期剔除**：Provider 超时无心跳从路由表移除并断连
+- **离线消息持久化**（append-only 文件）：目标服务宕机时消息落盘，恢复后重放补发
+- **writev 合并发送**：Header + payload 单次 syscall
+- Makefile 构建（gcc / -Wall -Wextra 零警告目标）
 
 ---
 
-## 📊 压测报告（示例）
+## 📊 压测报告（实测）
 
-压测环境：Intel i7-12700 / 32GB / Ubuntu 22.04 / loopback TCP
+环境：VirtualBox 虚拟机 / Ubuntu 24.04 / gcc 13 / loopback TCP / 单线程事件循环
 
 | 指标 | 数值 |
 |---|---|
-| 并发长连接 | 5,000 |
-| 峰值 QPS | 120,000+ req/s |
-| p50 延迟 | 0.3 ms |
-| p99 延迟 | 0.9 ms |
-| 稳态 RSS | ≤ 60 MB |
-| 10s 丢包率 | 0.000% |
+| 压测命令 | `./build/bench_client 127.0.0.1 9090 100 1000` |
+| 压测规模 | 100 并发连接 × 1000 请求 = 100,000 请求 |
+| 成功率 | 99,658 / 100,000 = **99.66%** |
+| 吞吐 | **2,357 req/s** |
+| 平均延迟 | **4.585 ms** |
+| 收尾状态 | `conns=0 / reg_svcs=0`，无连接与路由表泄漏 |
 
-> 压测命令：`wrk -t8 -c500 -d30s -s scripts/rpc_req.lua http://127.0.0.1:9090/`
+极端半包验证：29 字节消息**逐字节发送**（间隔 2ms），网关正确重组并回复 REGISTER ACK。
+
+> 单线程教学实现，追求正确性与可读性；多线程主从 Reactor 见 Roadmap。
+
+---
+
+## 🗺 Roadmap（计划中，非当前能力）
+
+- [ ] timerfd 替代 epoll_wait 超时轮询做心跳扫描
+- [ ] /stats HTTP 接口（当前为 stdout 每秒打印）
+- [ ] NOTIFY 订阅表广播
+- [ ] tests/ 单元测试（ServiceRegistry 优先）
+- [ ] 协议多字节字段 htonl/ntohl 大端化（当前依赖同构主机）
+- [ ] 多线程主从 Reactor / SO_REUSEPORT
+- [ ] TLS / 鉴权
 
 ---
 
@@ -67,23 +83,17 @@
 ```
 SomeIpGateway/
 ├── README.md
-├── Makefile               # 默认（简单硬核）
+├── Makefile               # 默认构建
 ├── CMakeLists.txt         # 可选
 ├── include/
-│   ├── protocol.h         # Header（直接用 vipc::Header，保持一致，本仓库复制一份防依赖）
+│   ├── protocol.h         # 25B 协议头 + static_assert（C/C++ 双端同步修改）
 │   ├── ServiceRegistry.hpp  # 核心：svc_id→provider 路由 + 心跳
-│   ├── TcpConn.hpp        # 单个客户端连接对象 + 环形收/发缓冲
-│   ├── EpollServer.hpp    # epoll主循环+Accept+Read+Write
-│   ├── PersistQueue.h     # 离线持久化队列
-│   └── Stats.hpp          # QPS/连接/内存 统计
+│   └── PersistQueue.h     # 离线持久化队列
 ├── src/
 │   ├── PersistQueue.cpp
-│   └── main.cpp           # 组合各模块 + HTTP stats接口(tiny http parser)
-├── scripts/
-│   ├── bench_client.c     # 压测小工具（10000连接/发请求/计时）
-│   └── rpc_req.lua        # wrk 压测脚本
-└── tests/
-    └── test_registry.cpp  # ServiceRegistry 单元测试
+│   └── main.cpp           # epoll 主循环 + 收发缓冲 + 路由/配对/持久化（改动清单见文件头注释）
+└── scripts/
+    └── bench_client.c     # 压测小工具（N 连接 × M 请求，打印 QPS/延迟）
 ```
 
 ---
@@ -91,10 +101,11 @@ SomeIpGateway/
 ## 🚀 快速开始
 
 ```bash
-# 使用 Makefile
-make -j$(nproc)
-./build/someip_gateway --port 9090 --hb 5000   # 端口9090，心跳5秒
-# 打开 http://127.0.0.1:9090/stats 看监控
+make
+# 终端1：启动网关
+./build/someip_gateway --port 9090 --hb 5000   # 端口9090，心跳超时5秒
+# 终端2：压测（100 连接 × 1000 请求）
+./build/bench_client 127.0.0.1 9090 100 1000
 ```
 
 ---

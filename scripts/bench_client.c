@@ -25,7 +25,9 @@ typedef struct {
     uint32_t client_id;
     uint8_t  msg_type;
     uint8_t  error_code;
-} __attribute__((packed)) Header;
+    uint8_t  version;
+    uint8_t  reserved[2];
+} __attribute__((packed)) Header;   // sizeof == 25，与 include/protocol.h 保持一致
 
 static const char* g_host;
 static int g_port;
@@ -69,17 +71,17 @@ static void* worker(void* arg) {
         int fd = connect_tcp(g_host, g_port);
         if (fd < 0) { usleep(1000); continue; }
         // 先发 REGISTER（模拟 Provider）再发 REQUEST
-        Header hreg = {kMagic, 0x00001000 + c, 0, 4, (uint32_t)pthread_self()*1000+(uint32_t)c, 0x08, 0};
+        Header hreg = {kMagic, 0x00001000 + c, 0, 4, (uint32_t)pthread_self()*1000+(uint32_t)c, 0x08, 0, 0, {0,0}};
         uint8_t payload[4] = {0x00,0x00,0x10,(uint8_t)c};
-        write(fd, &hreg, 25);
+        write(fd, &hreg, sizeof(Header));
         write(fd, payload, 4);
-        Header ack; readn(fd, &ack, 25);
+        Header ack; readn(fd, &ack, sizeof(Header));
 
         int64_t t0 = nowUs();
-        Header req = {kMagic, 0x00001000 + c, 1, 0, (uint32_t)pthread_self()*1000+(uint32_t)c, 0x00, 0};
-        write(fd, &req, 25);
+        Header req = {kMagic, 0x00001000 + c, 1, 0, (uint32_t)pthread_self()*1000+(uint32_t)c, 0x00, 0, 0, {0,0}};
+        write(fd, &req, sizeof(Header));
         Header rsp;
-        if (readn(fd, &rsp, 25) > 0 && rsp.magic == kMagic) {
+        if (readn(fd, &rsp, sizeof(Header)) > 0 && rsp.magic == kMagic) {
             int64_t lat = nowUs() - t0;
             __sync_add_and_fetch(&g_total_ok, 1);
             __sync_add_and_fetch(&g_total_latency_us, lat);

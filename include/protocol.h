@@ -35,6 +35,8 @@ struct __attribute__((packed)) Header {
     uint32_t  client_id;
     MsgType   msg_type;
     ErrorCode error_code;
+    uint8_t   version;      // 协议版本，当前=0（预留：版本协商/兼容判断）
+    uint8_t   reserved[2];  // 对齐到 25B，预留未来扩展
 };
 static_assert(sizeof(Header) == kHeaderSize, "Header size != 25 bytes");
 
