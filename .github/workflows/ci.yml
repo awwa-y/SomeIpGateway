@@ -1,0 +1,39 @@
+name: build-and-bench
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: |
+          make -j4
+          ls -l build/
+
+      - name: Smoke test
+        run: |
+          ./build/someip_gateway --port 9090 --hb 5000 > gateway_smoke.log 2>&1 &
+          GW=$!
+          sleep 2
+          ./build/bench_client 127.0.0.1 9090 20 100 | tee bench_smoke.log
+          sleep 1
+          kill $GW 2>/dev/null || true
+          echo "===== gateway log ====="
+          tail -40 gateway_smoke.log
+
+      - name: Full bench 100 x 1000
+        run: |
+          ./build/someip_gateway --port 9091 --hb 5000 > gateway_full.log 2>&1 &
+          GW=$!
+          sleep 2
+          ./build/bench_client 127.0.0.1 9091 100 1000 | tee bench_full.log
+          sleep 2
+          kill $GW 2>/dev/null || true
+          echo "===== gateway log ====="
+          tail -40 gateway_full.log
