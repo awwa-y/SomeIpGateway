@@ -37,3 +37,13 @@ jobs:
           kill $GW 2>/dev/null || true
           echo "===== gateway log ====="
           tail -40 gateway_full.log
+          {
+            echo "## Bench Result (100 conns x 1000 reqs)"
+            echo '```'
+            cat bench_full.log
+            echo '```'
+            echo "## Gateway tail (final stats)"
+            echo '```'
+            tail -20 gateway_full.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
