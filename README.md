@@ -1,5 +1,7 @@
 # SomeIpGateway — SOME/IP 风格车云通信 epoll 网关
 
+[![build-and-bench](https://github.com/awwa-y/SomeIpGateway/actions/workflows/ci.yml/badge.svg)](https://github.com/awwa-y/SomeIpGateway/actions/workflows/ci.yml)
+
 将传统"无差别TCP广播器"升级为具备**服务注册发现 + 点对点RPC + 心跳保活 + 持久化消息队列**的轻量级车云通信网关，模拟 SOME/IP (Service-Oriented MiddlewarE over IP) 核心机制。
 
 > 本仓库与 `VehicleIpcBus` 配套使用：**车内走 UDS IPC（VehicleIpcBus），车云通过 TCP 走 SomeIpGateway**，
@@ -22,22 +24,24 @@
 
 ---
 
-## 📊 压测报告（实测）
+## 📊 压测报告（CI 实测）
 
-环境：VirtualBox 虚拟机 / Ubuntu 24.04 / gcc 13 / loopback TCP / 单线程事件循环
+环境：GitHub Actions `ubuntu-latest`（2 核共享 runner）/ gcc / loopback TCP / 单线程事件循环
+
+每次提交自动构建并跑压测，数据可在 [Actions 记录](https://github.com/awwa-y/SomeIpGateway/actions) 中复现。
 
 | 指标 | 数值 |
 |---|---|
-| 压测命令 | `./build/bench_client 127.0.0.1 9090 100 1000` |
+| 压测命令 | `./build/bench_client 127.0.0.1 9091 100 1000` |
 | 压测规模 | 100 并发连接 × 1000 请求 = 100,000 请求 |
-| 成功率 | 99,658 / 100,000 = **99.66%** |
-| 吞吐 | **2,357 req/s** |
-| 平均延迟 | **4.585 ms** |
-| 收尾状态 | `conns=0 / reg_svcs=0`，无连接与路由表泄漏 |
+| 成功数 | 99,886 / 100,000 = **99.89%** |
+| 耗时 | 29.215 s |
+| 吞吐 | **3,419 req/s** |
+| 平均延迟 | **2.205 ms** |
 
-极端半包验证：29 字节消息**逐字节发送**（间隔 2ms），网关正确重组并回复 REGISTER ACK。
+压测期间网关侧统计：`kicked_slow=32`（背压水位线真实踢除慢客户端）、`[sweep] ... stale, close`（心跳超时清理），说明背压与心跳剔除机制在压力下实际生效，而非仅存在于代码中。
 
-> 单线程教学实现，追求正确性与可读性；多线程主从 Reactor 见 Roadmap。
+> 单线程实现，追求正确性与可读性；多线程主从 Reactor 见 Roadmap。
 
 ---
 
