@@ -26,6 +26,8 @@
 #include <string>
 #include <thread>
 #include <atomic>
+#include <chrono>
+#include <utility>
 #include <vector>
 #include <algorithm>
 #include <unordered_map>
@@ -46,6 +48,7 @@ using namespace sip;
 // ---- 协议与背压常量 --------------------------------------------------------
 static constexpr uint32_t kMaxPayload = 1u << 20;   // 1MB，超过视为恶意/错误帧
 static constexpr size_t   kMaxOutBuf  = 4u << 20;   // 4MB 发送缓冲水位线
+static constexpr size_t   kMaxInBuf   = 4u << 20;   // 4MB 接收缓冲水位线（防半包堆积）
 
 // ---- epoll 事件组合 --------------------------------------------------------
 static constexpr uint32_t kEvRead  = EPOLLIN | EPOLLRDHUP | EPOLLET;
@@ -60,6 +63,13 @@ static int setNonBlock(int fd) {
     return fcntl(fd, F_SETFL, f | O_NONBLOCK);
 }
 
+// 单调毫秒时间戳（心跳/未决请求超时共用）
+static uint64_t nowMs() {
+    using namespace std::chrono;
+    return (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
 // ------------- 简单统计 -----------------------------------------------------
 struct Stats {
     std::atomic<uint64_t> qps_total{0};
@@ -72,9 +82,19 @@ static ServiceRegistry* g_services = nullptr;
 static PersistQueue*    g_queue    = nullptr;
 static int              g_epfd     = -1;   // handleMsg 里注册 EPOLLOUT 要用
 
-// client_id → original client fd（Response 原路返回）
+// client_id → (original client fd, 入表时间戳 ms)
 static std::mutex g_pending_mtx;
-static std::unordered_map<uint32_t, int> g_pending;
+static std::unordered_map<uint32_t, std::pair<int, uint64_t>> g_pending;
+
+static constexpr uint64_t kPendingTimeoutMs = 30000;   // 未决请求超时：provider 不回 RESPONSE 时自动清理
+
+static void sweepPending(uint64_t now) {
+    std::lock_guard<std::mutex> lk(g_pending_mtx);
+    for (auto it = g_pending.begin(); it != g_pending.end(); ) {
+        if (now - it->second.second > kPendingTimeoutMs) it = g_pending.erase(it);
+        else ++it;
+    }
+}
 
 // ------------- 连接对象：收/发缓冲（半包与短写的核心）-------------------------
 struct Conn {
@@ -119,7 +139,8 @@ static void sendRaw(int fd, const Header& h, const uint8_t* payload, uint32_t pl
     Conn* c = getConn(fd);
     if (!c) return;
 
-    const uint8_t* hbuf = reinterpret_cast<const uint8_t*>(&h);
+    Header hn = headerToNet(h);   // 线上统一大端
+    const uint8_t* hbuf = reinterpret_cast<const uint8_t*>(&hn);
     const size_t   total = kHeaderSize + plen;
 
     if (c->out.empty() && c->outOff == 0) {
@@ -206,6 +227,7 @@ static void processInBuf(int fd) {
 
         Header h;
         std::memcpy(&h, buf.data() + off, kHeaderSize);   // packed 结构体用 memcpy，避免未对齐访问
+        h = headerToHost(h);                              // 大端线上字节序 → 主机序
 
         if (h.magic != kMagic) {
             std::printf("[proto] fd=%d bad magic, drop conn\n", fd);
@@ -250,6 +272,10 @@ static void onReadable(int fd) {
             return;
         }
     }
+    if (c->in.size() > kMaxInBuf) {   // 接收缓冲水位线：防恶意半包堆积耗尽内存
+        kickSlow(fd, "receive buffer overflow");
+        return;
+    }
     processInBuf(fd);
 }
 
@@ -281,7 +307,7 @@ static void handleMsg(int fd, const Header& h, const uint8_t* payload) {
             req.length     = (uint32_t)m.payload.size();
             req.msg_type   = MsgType::REQUEST;
             { std::lock_guard<std::mutex> lk(g_pending_mtx);
-                g_pending[req.client_id] = (int)m.original_client_fd; }
+                g_pending[req.client_id] = { (int)m.original_client_fd, nowMs() }; }
             sendRaw(fd, req, m.payload.data(), (uint32_t)m.payload.size());
         }
         Header ack = h;
@@ -311,7 +337,7 @@ static void handleMsg(int fd, const Header& h, const uint8_t* payload) {
             return;
         }
         { std::lock_guard<std::mutex> lk(g_pending_mtx);
-            g_pending[h.client_id] = fd; }
+            g_pending[h.client_id] = { fd, nowMs() }; }
         sendRaw(provider, h, payload, h.length);
         return;
     }
@@ -321,7 +347,7 @@ static void handleMsg(int fd, const Header& h, const uint8_t* payload) {
         { std::lock_guard<std::mutex> lk(g_pending_mtx);
             auto it = g_pending.find(h.client_id);
             if (it != g_pending.end()) {
-                origin = it->second;
+                origin = it->second.first;
                 g_pending.erase(it);
             }
         }
@@ -356,7 +382,7 @@ void gatewayDelFd(int fd) {
     {
         std::lock_guard<std::mutex> lk(g_pending_mtx);
         for (auto it = g_pending.begin(); it != g_pending.end(); ) {
-            if (it->second == fd) it = g_pending.erase(it);
+            if (it->second.first == fd) it = g_pending.erase(it);
             else ++it;
         }
     }
@@ -426,11 +452,6 @@ int main(int argc, char** argv) {
 
     // sweep 计时（TODO#1: 改用 timerfd 融入事件循环后可去掉这里的轮询）
     uint64_t last_sweep_ms = 0;
-    auto nowMs = []{
-        using namespace std::chrono;
-        return (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count();
-    };
 
     const int MAXEV = 256;
     epoll_event events[MAXEV];
@@ -446,6 +467,7 @@ int main(int argc, char** argv) {
                 std::printf("[sweep] fd=%d stale, close\n", dfd);
                 gatewayDelFd(dfd);
             }
+            sweepPending(now);   // 清理超时未决 RPC 配对
         }
         if (n <= 0) continue;
 
@@ -458,8 +480,9 @@ int main(int argc, char** argv) {
                     sockaddr_in caddr{}; socklen_t clen = sizeof(caddr);
                     int c = ::accept(lsock, (sockaddr*)&caddr, &clen);
                     if (c < 0) {
-                        // TODO: EMFILE（fd耗尽）时会在这里 busy-loop，
-                        //       预留空闲fd法处理——压测到高连接数时你会亲眼见到
+                        // EINTR 重试；EAGAIN 表示本轮收干；EMFILE 等错误暂缓，
+                        // 等下一轮 epoll 触发再收（ET 下剩余 backlog 等下一次可读事件）
+                        if (errno == EINTR) continue;
                         break;
                     }
                     setNonBlock(c);

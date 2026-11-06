@@ -18,27 +18,27 @@ jobs:
 
       - name: Smoke test
         run: |
+          set -euo pipefail
           ./build/someip_gateway --port 9090 --hb 5000 > gateway_smoke.log 2>&1 &
           GW=$!
+          trap 'kill $GW 2>/dev/null || true' EXIT
           sleep 2
           ./build/bench_client 127.0.0.1 9090 20 100 | tee bench_smoke.log
-          sleep 1
-          kill $GW 2>/dev/null || true
           echo "===== gateway log ====="
           tail -40 gateway_smoke.log
 
       - name: Full bench 100 x 1000
         run: |
+          set -euo pipefail
           ./build/someip_gateway --port 9091 --hb 5000 > gateway_full.log 2>&1 &
           GW=$!
+          trap 'kill $GW 2>/dev/null || true' EXIT
           sleep 2
           ./build/bench_client 127.0.0.1 9091 100 1000 | tee bench_full.log
-          sleep 2
-          kill $GW 2>/dev/null || true
           echo "===== gateway log ====="
           tail -40 gateway_full.log
           {
-            echo "## Bench Result (100 conns x 1000 reqs)"
+            echo "## Bench Result (100 providers + 100 consumers x 1000 reqs)"
             echo '```'
             cat bench_full.log
             echo '```'

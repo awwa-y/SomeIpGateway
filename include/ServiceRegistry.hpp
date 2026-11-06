@@ -65,27 +65,37 @@ public:
     }
 
     // ---- Heartbeat Sweep ----
-    // 返回被踢掉的 fd 列表（上层close它们）
+    // 返回被踢掉的 fd 列表（上层close它们）。
+    // 语义：一个 fd 只要有任一注册服务心跳超时，就整条连接判定为失效，
+    // 从所有服务与反向索引中彻底移除，避免"只删了部分服务、残留已 close 的 fd"。
     std::vector<int> sweepStale(uint64_t timeout_ms) {
         std::vector<int> dead;
         uint64_t now = nowMs();
-        std::list<std::pair<int, uint32_t>> dead_pairs; // fd, svc
 
         std::lock_guard<std::mutex> lk(mtx_);
+        // 1. 找出所有过期 fd（任一服务过期即整连接过期）
         for (auto& [svc, lst] : routes_) {
-            for (auto it = lst.begin(); it != lst.end(); ) {
-                if (now - it->last_hb_ms > timeout_ms) {
-                    dead.push_back(it->fd);
-                    dead_pairs.push_back({it->fd, svc});
-                    it = lst.erase(it);
-                } else ++it;
+            for (auto& p : lst) {
+                if (now - p.last_hb_ms > timeout_ms) {
+                    dead.push_back(p.fd);
+                }
             }
         }
-        // 去重 dead fd
+        // 2. 去重
         std::sort(dead.begin(), dead.end());
         dead.erase(std::unique(dead.begin(), dead.end()), dead.end());
-        // 同步删 fd_to_services_
-        for (int fd : dead) fd_to_services_.erase(fd);
+        // 3. 从所有服务和反向索引中彻底移除这些 fd
+        for (int fd : dead) {
+            for (auto& [svc, lst] : routes_) {
+                lst.remove_if([fd](const ProviderInfo& p){ return p.fd == fd; });
+            }
+            fd_to_services_.erase(fd);
+        }
+        // 4. 清理空服务条目
+        for (auto it = routes_.begin(); it != routes_.end(); ) {
+            if (it->second.empty()) it = routes_.erase(it);
+            else ++it;
+        }
         return dead;
     }
 

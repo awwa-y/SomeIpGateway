@@ -30,7 +30,7 @@ $(TARGET): $(OBJS) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS)
 
 $(BENCH): scripts/bench_client.c | $(BUILD_DIR)
-	$(CC) -O2 -Wall $< -o $@
+	$(CC) -std=gnu11 -O2 -Wall -pthread $< -o $@
 
 clean:
 	rm -rf $(BUILD_DIR)

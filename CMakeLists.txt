@@ -17,3 +17,5 @@ target_include_directories(someip_gateway PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/in
 target_link_libraries(someip_gateway PRIVATE pthread)
 
 add_executable(bench_client scripts/bench_client.c)
+set_target_properties(bench_client PROPERTIES C_STANDARD 11)
+target_link_libraries(bench_client PRIVATE pthread)
