@@ -1,10 +1,10 @@
-# SomeIpGateway — 自定义二进制协议的 TCP RPC 网关（借鉴 SOME/IP 服务化思想）
+# SomeIpGateway — 上位机通信网关（TCP 服务路由 / RPC）
 
 [![build-and-bench](https://github.com/awwa-y/SomeIpGateway/actions/workflows/ci.yml/badge.svg)](https://github.com/awwa-y/SomeIpGateway/actions/workflows/ci.yml)
 
-将传统"无差别TCP广播器"升级为具备**服务注册发现 + 点对点RPC + 心跳保活 + 离线消息队列**的轻量级车云通信网关。注意：协议为**自定义二进制帧**，**不是 AUTOSAR SOME/IP**（无标准 16 字节头、无 SOME/IP-SD 服务发现），仅借鉴其"服务化中间件"思想。
+将传统"无差别TCP广播器"升级为具备**服务注册发现 + 点对点RPC + 心跳保活 + 离线消息队列**的轻量级上位机通信网关。注意：协议为**自定义二进制帧**，**不是 AUTOSAR SOME/IP**（无标准 16 字节头、无 SOME/IP-SD 服务发现），仅借鉴其"服务化中间件"思想，也不涉及真实车端 CAN/SOME-IP 硬件。
 
-> 本仓库与 `VehicleIpcBus` 配套使用：**车内走 UDS IPC（VehicleIpcBus），车云通过 TCP 走 SomeIpGateway**，
+> 本仓库与 `VehicleIpcBus` 配套使用：**车内走 UDS IPC（VehicleIpcBus），上位机通过 TCP 走 SomeIpGateway**，
 > 形成完整"车内+车外"智能汽车通信链路参考实现。
 
 ---

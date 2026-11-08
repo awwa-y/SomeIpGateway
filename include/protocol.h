@@ -1,7 +1,7 @@
 #pragma once
 // ============================================================================
 // protocol.h — 与 VehicleIpcBus::vipc::Header 保持一致（为了零依赖本仓库复制一份）
-// 车云 TCP 帧：Header(25B) + Payload(length B)
+// 上位机通信 TCP 帧：Header(25B) + Payload(length B)
 // ============================================================================
 #include <cstdint>
 
