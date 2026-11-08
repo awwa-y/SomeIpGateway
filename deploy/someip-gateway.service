@@ -1,0 +1,17 @@
+[Unit]
+Description=SomeIpGateway - 服务路由网关(车云通信)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__PREFIX__
+ExecStart=__PREFIX__/build/someip_gateway --port __PORT__ --hb __HB_MS
+Restart=on-failure
+RestartSec=3
+StandardOutput=append:/var/log/someip_gateway.log
+StandardError=append:/var/log/someip_gateway.log
+
+[Install]
+WantedBy=multi-user.target

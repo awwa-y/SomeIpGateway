@@ -106,6 +106,19 @@ make
 ./build/bench_client 127.0.0.1 9090 100 1000
 ```
 
+### 部署到树莓派（Raspberry Pi OS / Debian）
+
+```bash
+git clone https://github.com/awwa-y/SomeIpGateway.git ~/someip_gateway
+cd ~/someip_gateway
+./scripts/deploy_pi.sh              # 构建 + 前台运行提示
+./scripts/deploy_pi.sh --install    # 额外装成 systemd 服务，开机自启
+```
+
+- 默认端口 9090、心跳超时 5000ms；可用 `PORT=9091 HB_MS=8000 ./scripts/deploy_pi.sh` 覆盖。
+- 服务单元模板在 `deploy/someip-gateway.service`，日志写入 `/var/log/someip_gateway.log`。
+- 查看状态：`systemctl status someip-gateway`；实时日志：`journalctl -u someip-gateway -f`。
+
 ---
 
 ## 🔗 相关仓库
