@@ -296,6 +296,7 @@ static void handleMsg(int fd, const Header& h, const uint8_t* payload) {
             ((uint32_t)payload[0]<<24)|((uint32_t)payload[1]<<16)|
             ((uint32_t)payload[2]<<8)|(uint32_t)payload[3];
         g_services->addProvider(svc, fd);
+        std::printf("[REGISTER] fd=%d service=0x%08X\n", fd, svc);
         // REGISTER 成功后重放持久化队列
         auto drain = g_queue->drainFor(svc);
         for (auto& m : drain) {
